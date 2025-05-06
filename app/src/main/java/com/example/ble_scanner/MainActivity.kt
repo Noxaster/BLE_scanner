@@ -1,7 +1,7 @@
 package com.example.ble_scanner
 
 import android.Manifest
-import android.bluetooth.BluetoothDevice
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
@@ -50,24 +50,79 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.bluetoothlowenergy.BLEClient
 import com.example.ble_scanner.ui.theme.BLE_scannerTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import java.nio.charset.Charset
+import java.util.UUID
 
 data class Device(
-    val name: String,
-    val address: String,
-    val uuid: String,
-    val rssi: Int,
-    val device: BluetoothDevice
+    val identifier: String?,
+    val result: ScanResult,
+)
+
+data class Characteristic(
+    val identifier: String,
+    val read: ((ByteArray) -> String)?,
+    val write: ((Float) -> ByteArray)?,
 )
 
 enum class Screen() {
     Scanner
+}
+
+enum class CharacteristicType(val uuid: UUID) {
+    Temperature(uuid = UUID.fromString("00002a1c-0000-1000-8000-00805f9b34fb")),
+    Humidity(uuid = UUID.fromString("00002a6f-0000-1000-8000-00805f9b34fb")),
+    Intensity(uuid = UUID.fromString("10000001-0000-0000-FDFD-FDFDFDFDFDFD")),
+}
+
+enum class Service(
+    val uuid: UUID,
+    val descriptorUUID: UUID?,
+    val characteristics: Map<UUID, Characteristic>
+) {
+    IPVSWeather(
+        uuid = UUID.fromString("00000002-0000-0000-FDFD-FDFDFDFDFDFD"),
+        descriptorUUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"),
+        characteristics = mapOf(
+            CharacteristicType.Temperature.uuid to Characteristic(
+                identifier = "Temperature",
+                read = {
+                    String(it, Charset.defaultCharset())
+                },
+                write = null
+            ),
+            CharacteristicType.Humidity.uuid to Characteristic(
+                identifier = "Humidity",
+                read = {
+                    String(it, Charset.defaultCharset())
+                },
+                write = null
+            ),
+        )
+    ),
+    IPVSLight(
+        uuid = UUID.fromString("00000001-0000-0000-FDFD-FDFDFDFDFDFD"),
+        descriptorUUID = null,
+        characteristics = mapOf(
+            CharacteristicType.Intensity.uuid to Characteristic(
+                identifier = "Intensity",
+                read = {
+                    String(it, Charset.defaultCharset())
+                },
+                write = {
+                    "Bruh".toByteArray()
+                }
+            ),
+        )
+    )
 }
 
 @RequiresPermission(Manifest.permission.BLUETOOTH_SCAN)
@@ -79,16 +134,7 @@ fun Context.scannerFlow(): Flow<Device> = callbackFlow {
     val callback = object : ScanCallback() {
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onScanResult(cbType: Int, result: ScanResult) {
-            val device = result.device
-            val deviceName = device.name ?: "Unknown Device"
-            val deviceAddress = device.address
-            val uuid =
-                result.scanRecord?.serviceUuids?.firstOrNull()?.toString() ?: "Unknown Service"
-            val rssi = result.rssi
-
-            Log.d("Bruh", deviceName)
-
-            trySend(Device(deviceName, deviceAddress, uuid, rssi, device))
+            trySend(Device(result.device.name, result))
         }
     }
 
@@ -103,6 +149,15 @@ fun Context.scannerFlow(): Flow<Device> = callbackFlow {
 }
 
 class MainActivity : ComponentActivity() {
+    suspend fun doWithPermission(perms: Array<String>, action: suspend () -> Unit) {
+        if (perms.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+            action()
+        } else {
+            requestPermissions(perms, 1)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -123,27 +178,61 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                     ) {
                         composable(route = Screen.Scanner.name) {
+                            val context = LocalContext.current
+
                             val scope = rememberCoroutineScope()
                             var scanJob by remember { mutableStateOf<Job?>(null) }
                             val devices = remember { mutableStateListOf<Device>() }
 
-                            BleDeviceListScreen(devices) {
-                                if (it) {
-                                    devices.clear()
-                                    scanJob = scope.launch {
-                                        if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
-                                            scannerFlow().distinctUntilChangedBy { it.address }
-                                                .collect { devices += it }
-                                        } else {
-                                            requestPermissions(
-                                                arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT), 1
-                                            )
+                            var bleClient: BLEClient? = remember { null }
+
+                            BleDeviceListScreen(
+                                results = devices,
+                                onToggleScan = {
+                                    if (it) {
+                                        devices.clear()
+                                        scanJob = scope.launch {
+                                            doWithPermission(
+                                                arrayOf(
+                                                    Manifest.permission.BLUETOOTH_SCAN,
+                                                    Manifest.permission.BLUETOOTH_CONNECT,
+                                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                                )
+                                            ) {
+                                                scannerFlow().distinctUntilChangedBy { it.result.device.address }
+                                                    .filter { it.identifier != null }
+                                                    .collect { devices += it }
+                                            }
                                         }
+                                    } else {
+                                        scanJob?.cancel()
                                     }
-                                } else {
-                                    scanJob?.cancel()
+                                },
+                                onSelect = {
+                                    val uuids = it.result.scanRecord?.serviceUuids
+
+                                    if (uuids?.any { it.uuid.equals(Service.IPVSLight.uuid) } == true) {
+                                        bleClient = BLEClient(context, Service.IPVSLight)
+                                        bleClient!!.connect(
+                                            device = it.result.device,
+                                            onConnect = {
+                                                Log.d("BLE", "Connected")
+                                            },
+                                            readCallback = { uuid, string ->
+                                                Log.d("BLE", "[${uuid.toString()}]: ${string}")
+                                            }
+                                        )
+
+                                        bleClient!!.readCharacteristic(CharacteristicType.Intensity.uuid)
+                                    } else if (uuids?.any { it.uuid.equals(Service.IPVSWeather.uuid) } == true) {
+                                        bleClient = BLEClient(context, Service.IPVSWeather)
+                                    } else {
+                                        Toast.makeText(context, "Other Devices", Toast.LENGTH_SHORT)
+                                            .show()
+                                        Log.d("BLE", uuids?.joinToString { it.uuid.toString() } ?: "No uuids")
+                                    }
                                 }
-                            }
+                            )
                         }
                     }
                 }
@@ -161,8 +250,11 @@ fun TopBarDisplay() {
 }
 
 @Composable
-fun BleDeviceListScreen(devices: List<Device>, onToggleScan: (Boolean) -> Unit) {
-    val context = LocalContext.current
+fun BleDeviceListScreen(
+    results: List<Device>,
+    onToggleScan: (Boolean) -> Unit,
+    onSelect: (Device) -> Unit
+) {
     var isScanning by remember { mutableStateOf(false) }
 
     Column(
@@ -191,22 +283,15 @@ fun BleDeviceListScreen(devices: List<Device>, onToggleScan: (Boolean) -> Unit) 
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxSize()
         ) {
-            items(devices) { device ->
-                DeviceList(device, onConnect = {
-                    if (it.uuid.toString() == "00000002-0000-0000-FDFD-FDFDFDFDFDFD") {
-                        Toast.makeText(context, "IPVSWeather", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(context, "Other Devices", Toast.LENGTH_SHORT).show()
-                    }
-                })
+            items(results) {
+                DeviceList(it) { onSelect(it) }
             }
         }
-
     }
 }
 
 @Composable
-fun DeviceList(device: Device, onConnect: (Device) -> Unit) {
+fun DeviceList(device: Device, onClick: () -> Unit) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -220,30 +305,25 @@ fun DeviceList(device: Device, onConnect: (Device) -> Unit) {
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = device.name,
+                    text = device.identifier ?: "Unknown device",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "MAC: ${device.address}",
+                    text = "MAC: ${device.result.device.address}",
                     fontSize = 14.sp,
                     color = Color.DarkGray
                 )
                 Text(
-                    text = "UUID: ${device.uuid}",
+                    text = "Signal: ${device.result.rssi} dBm",
                     fontSize = 14.sp,
-                    color = Color.DarkGray
-                )
-                Text(
-                    text = "Signal: ${device.rssi} dBm",
-                    fontSize = 14.sp,
-                    color = if (device.rssi > -60) Color(0xFF4CAF50) else Color(0xFFFF9800)
+                    color = if (device.result.rssi > -60) Color(0xFF4CAF50) else Color(0xFFFF9800)
                 )
             }
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            OutlinedButton(onClick = { onConnect(device) }) {
+            OutlinedButton(onClick = { onClick() }) {
                 Text(text = "Connect")
             }
         }
