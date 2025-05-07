@@ -9,7 +9,6 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
-import android.content.Context
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -22,11 +21,12 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.Charset
 import java.util.UUID
+import kotlin.math.pow
 
 data class Characteristic(
     val identifier: String,
-    val read: ((ByteArray) -> String)?,
-    val write: ((Int) -> ByteArray)?,
+    val readSupported: Boolean,
+    val writeSupported: Boolean,
 )
 
 enum class CharacteristicType(val uuid: UUID) {
@@ -44,22 +44,29 @@ enum class ServiceType(val uuid: UUID?) {
     IPVSLight(uuid = UUID.fromString("00000001-0000-0000-FDFD-FDFDFDFDFDFD")),
 }
 
+val characteristics: Map<UUID, (ByteArray) -> String> = mapOf(
+    CharacteristicType.Temperature.uuid to {
+        ieee11073ToFloat(it.sliceArray(1..it.size - 1), 0).toString() + "°C"
+    }
+)
+
 val services: Map<UUID, Service> = mapOf(
     ServiceType.IPVSWeather.uuid!! to Service(
         characteristics = mapOf(
             CharacteristicType.Temperature.uuid to Characteristic(
                 identifier = "Temperature",
-                read = {
-                    String(it, Charset.defaultCharset())
-                },
-                write = null
+                readSupported = true,
+                writeSupported = false,
             ),
             CharacteristicType.Humidity.uuid to Characteristic(
                 identifier = "Humidity",
                 read = {
-                    String(it, Charset.defaultCharset())
+                    val str = ByteBuffer
+                        .wrap(it + byteArrayOf(0x00, 0x00))
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .getInt().toString()
+                    "${str.slice(0..str.length - 3)}.${str.slice(str.length - 2..str.length - 1)}%"
                 },
-                write = null
             ),
         )
     ),
@@ -70,9 +77,6 @@ val services: Map<UUID, Service> = mapOf(
                 read = {
                     String(it, Charset.defaultCharset())
                 },
-                write = {
-                    "Bruh".toByteArray()
-                }
             ),
         )
     ),
@@ -84,6 +88,22 @@ data class BLEClientState(
     val service: Service,
     val readValues: Map<UUID, String>,
 )
+
+fun ieee11073ToFloat(data: ByteArray, offset: Int): Float {
+    var mantissa = (data[offset].toInt() and 0xFF) or
+            ((data[offset + 1].toInt() and 0xFF) shl 8) or
+            ((data[offset + 2].toInt() and 0xFF) shl 16)
+    val exponent = data[offset + 3]
+
+    if ((mantissa and 0x800000) != 0) {
+        mantissa = mantissa or -0x1000000 // sign extend to 32 bits
+    }
+    return if (exponent < 0) {
+        (mantissa * 10.0.pow(exponent.toDouble())).toFloat()
+    } else {
+        (mantissa * 10.0.pow(exponent.toDouble())).toFloat()
+    }
+}
 
 class BLEClient(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow<BLEClientState?>(null)
@@ -99,7 +119,7 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    fun writeCharacteristic(characteristic: CharacteristicType, value: Int): Boolean {
+    fun writeCharacteristic(characteristic: CharacteristicType, value: ByteArray): Boolean {
         val state = _state.value ?: return false
 
         val gattCharacteristic = state.gatt
@@ -107,10 +127,7 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
             ?.getCharacteristic(characteristic.uuid) ?: return false
 
         return state.gatt.writeCharacteristic(
-            gattCharacteristic,
-            state.service.characteristics[characteristic.uuid]?.write?.let { it(value) }
-                ?: return false,
-            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            gattCharacteristic, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         ) == BluetoothStatusCodes.SUCCESS
     }
 
@@ -163,9 +180,9 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
 
                 _state.update {
                     if (it == null) return@update null
-                    val convVal = ByteBuffer.wrap(value).order(ByteOrder.LITTLE_ENDIAN).getFloat().toString()
-                    // val convVal = characteristic.getFloatValue(value)
-                    Log.d("BLE", "${convVal}")
+                    val convVal =
+                        it.service.characteristics[characteristic.uuid]?.read?.let { r -> r(value) }
+                    Log.d("BLE", "${convVal!!}")
                     it.copy(readValues = it.readValues.toMutableMap().apply {
                         set(characteristic.uuid, convVal)
                     })

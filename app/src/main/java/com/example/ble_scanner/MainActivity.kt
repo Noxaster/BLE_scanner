@@ -40,11 +40,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.ble_scanner.ui.theme.BLE_scannerTheme
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 enum class Screen() {
     Scanner
 }
-
 
 class MainActivity : ComponentActivity() {
     @SuppressLint("MissingPermission")
@@ -178,7 +179,7 @@ fun DeviceCard(activity: ComponentActivity, device: Device, client: BLEClient) {
 
                 OutlinedButton(onClick = {
                     // client.enableNotifications(true, CharacteristicType.Temperature)
-                    client.readCharacteristic(CharacteristicType.Temperature)
+                    client.writeCharacteristic(CharacteristicType.Intensity, ubyteArrayOf(0x00u, 0xFFu).asByteArray())
                 }) {
                     Text(text = "Notifications")
                 }

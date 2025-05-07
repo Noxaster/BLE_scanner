@@ -72,7 +72,7 @@ class Scanner(application: Application) : AndroidViewModel(application) {
                 awaitClose { scanner.stopScan(callback) }
             }.collect { device ->
                 _state.update { state ->
-                    if (state.devices.any { it.result.device.address == device.result.device.address }) state
+                    if (device.identifier == null || state.devices.any { it.result.device.address == device.result.device.address }) state
                     else state.copy(state.devices + device)
                 }
             }
