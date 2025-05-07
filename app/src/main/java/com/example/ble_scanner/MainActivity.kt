@@ -10,6 +10,7 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.ParcelUuid
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -62,8 +62,13 @@ import kotlinx.coroutines.launch
 import java.nio.charset.Charset
 import java.util.UUID
 
+enum class Screen() {
+    Scanner
+}
+
 data class Device(
     val identifier: String?,
+    val found: Boolean,
     val result: ScanResult,
 )
 
@@ -73,10 +78,6 @@ data class Characteristic(
     val write: ((Float) -> ByteArray)?,
 )
 
-enum class Screen() {
-    Scanner
-}
-
 enum class CharacteristicType(val uuid: UUID) {
     Temperature(uuid = UUID.fromString("00002a1c-0000-1000-8000-00805f9b34fb")),
     Humidity(uuid = UUID.fromString("00002a6f-0000-1000-8000-00805f9b34fb")),
@@ -84,7 +85,7 @@ enum class CharacteristicType(val uuid: UUID) {
 }
 
 enum class Service(
-    val uuid: UUID,
+    val uuid: UUID?,
     val descriptorUUID: UUID?,
     val characteristics: Map<UUID, Characteristic>
 ) {
@@ -122,11 +123,16 @@ enum class Service(
                 }
             ),
         )
+    ),
+    Other(
+        uuid = null,
+        descriptorUUID = null,
+        characteristics = mapOf(),
     )
 }
 
 @RequiresPermission(Manifest.permission.BLUETOOTH_SCAN)
-fun Context.scannerFlow(): Flow<Device> = callbackFlow {
+fun Context.scannerFlow(serviceUUID: ParcelUuid?): Flow<Device> = callbackFlow {
     val bluetoothManager: BluetoothManager = getSystemService(BluetoothManager::class.java)
     val adapter = bluetoothManager.adapter
     val scanner = adapter.bluetoothLeScanner
@@ -134,14 +140,24 @@ fun Context.scannerFlow(): Flow<Device> = callbackFlow {
     val callback = object : ScanCallback() {
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onScanResult(cbType: Int, result: ScanResult) {
-            trySend(Device(result.device.name, result))
+            trySend(
+                when (cbType) {
+                    ScanSettings.CALLBACK_TYPE_FIRST_MATCH ->
+                        Device(result.device.name, true, result)
+                    ScanSettings.CALLBACK_TYPE_MATCH_LOST ->
+                        Device(null, false, result)
+                    else -> return // Should not occur, however ignore if does
+                }
+            )
         }
     }
 
-    val filters = emptyList<ScanFilter>()
+    val filters = serviceUUID
+        ?.let { listOf(ScanFilter.Builder().setServiceUuid(it).build()) }
+        ?: emptyList()
     val settings = ScanSettings.Builder()
-        .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-        .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+        .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
+        .setCallbackType(ScanSettings.CALLBACK_TYPE_FIRST_MATCH or ScanSettings.CALLBACK_TYPE_MATCH_LOST)
         .build()
 
     scanner.startScan(filters, settings, callback)
@@ -178,11 +194,7 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                     ) {
                         composable(route = Screen.Scanner.name) {
-                            val context = LocalContext.current
 
-                            val scope = rememberCoroutineScope()
-                            var scanJob by remember { mutableStateOf<Job?>(null) }
-                            val devices = remember { mutableStateListOf<Device>() }
 
                             var bleClient: BLEClient? = remember { null }
 
@@ -229,7 +241,10 @@ class MainActivity : ComponentActivity() {
                                     } else {
                                         Toast.makeText(context, "Other Devices", Toast.LENGTH_SHORT)
                                             .show()
-                                        Log.d("BLE", uuids?.joinToString { it.uuid.toString() } ?: "No uuids")
+                                        Log.d(
+                                            "BLE",
+                                            uuids?.joinToString { it.uuid.toString() }
+                                                ?: "No uuids")
                                     }
                                 }
                             )
@@ -250,11 +265,13 @@ fun TopBarDisplay() {
 }
 
 @Composable
-fun BleDeviceListScreen(
-    results: List<Device>,
-    onToggleScan: (Boolean) -> Unit,
-    onSelect: (Device) -> Unit
-) {
+fun BleDeviceListScreen() {
+    val context = LocalContext.current
+
+    val scope = rememberCoroutineScope()
+    var scanJob by remember { mutableStateOf<Job?>(null) }
+
+    val devices = remember { mutableStateListOf<Device>() }
     var isScanning by remember { mutableStateOf(false) }
 
     Column(
@@ -267,6 +284,13 @@ fun BleDeviceListScreen(
             contentAlignment = Alignment.Center
         ) {
             OutlinedButton(onClick = {
+                if (isScanning) {
+                    isScanning = false
+                    devices.clear()
+                } else {
+                    isScanning = true
+
+                }
                 isScanning = !isScanning
                 onToggleScan(isScanning)
             }) {
@@ -284,14 +308,14 @@ fun BleDeviceListScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             items(results) {
-                DeviceList(it) { onSelect(it) }
+                DeviceCard(it) { onSelect(it) }
             }
         }
     }
 }
 
 @Composable
-fun DeviceList(device: Device, onClick: () -> Unit) {
+fun DeviceCard(device: Device, onClick: () -> Unit) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth()
     ) {
