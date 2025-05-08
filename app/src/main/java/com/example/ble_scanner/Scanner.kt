@@ -72,8 +72,14 @@ class Scanner(application: Application) : AndroidViewModel(application) {
                 awaitClose { scanner.stopScan(callback) }
             }.collect { device ->
                 _state.update { state ->
-                    if (device.identifier == null || state.devices.any { it.result.device.address == device.result.device.address }) state
-                    else state.copy(state.devices + device)
+                    if (device.identifier == null ||
+                        state.devices.any { it.result.device.address == device.result.device.address }) state
+                    else state.copy((state.devices + device).sortedWith { a, b ->
+                        if (a.identifier != null && b.identifier != null) a.identifier.compareTo(b.identifier)
+                        else if (a.identifier != null) 1
+                        else if (b.identifier != null) -1
+                        else a.result.device.address.compareTo(b.result.device.address)
+                    })
                 }
             }
         }

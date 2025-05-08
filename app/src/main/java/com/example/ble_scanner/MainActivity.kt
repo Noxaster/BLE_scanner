@@ -176,13 +176,6 @@ fun DeviceCard(activity: ComponentActivity, device: Device, client: BLEClient) {
                     fontSize = 14.sp,
                     color = if (device.result.rssi > -60) Color(0xFF4CAF50) else Color(0xFFFF9800)
                 )
-
-                OutlinedButton(onClick = {
-                    // client.enableNotifications(true, CharacteristicType.Temperature)
-                    client.writeCharacteristic(CharacteristicType.Intensity, ubyteArrayOf(0x00u, 0xFFu).asByteArray())
-                }) {
-                    Text(text = "Notifications")
-                }
             }
 
             Spacer(modifier = Modifier.width(8.dp))
@@ -191,7 +184,7 @@ fun DeviceCard(activity: ComponentActivity, device: Device, client: BLEClient) {
                 if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN)
                     == PackageManager.PERMISSION_GRANTED
                 ) {
-                    client.connect(device.result.device, {})
+                    client.connect(device.result.device, {}, {})
                 } else {
                     ActivityCompat.requestPermissions(
                         activity, arrayOf(
