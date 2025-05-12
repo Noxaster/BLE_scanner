@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -102,7 +103,17 @@ fun TopBarDisplay() {
 fun BleDeviceListScreen(activity: ComponentActivity, scanner: Scanner, client: BLEClient) {
     val context = LocalContext.current
     val scannerState = scanner.state.collectAsState().value
-    val connectState = client.state.collectAsState().value
+    val connectingDevices = remember { mutableStateOf<String?>(null) }
+
+    client.state.collectAsState().value?.let { state ->
+        DeviceDialog(
+            client = client,
+            onDismiss = {
+                client.disconnect()
+                connectingDevices.value = null
+            }
+        )
+    }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -140,14 +151,27 @@ fun BleDeviceListScreen(activity: ComponentActivity, scanner: Scanner, client: B
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxSize()
         ) {
-            items(scannerState.devices) { DeviceCard(activity, it, client) }
+            items(scannerState.devices) {
+                DeviceCard(
+                    activity, it, client,
+                    connectingDevices.value,
+                    onStartConnect = { connectingDevices.value = it.result.device.address },
+                    onConnectDone = { connectingDevices.value = null }
+                )
+            }
         }
     }
 }
 
 @Composable
-fun DeviceCard(activity: ComponentActivity, device: Device, client: BLEClient) {
+fun DeviceCard(
+    activity: ComponentActivity, device: Device, client: BLEClient,
+    connectingDevice: String?,
+    onStartConnect: () -> Unit,
+    onConnectDone: () -> Unit
+) {
     val context = LocalContext.current
+    val connecting = connectingDevice == device.result.device.address
 
     OutlinedCard(
         modifier = Modifier.fillMaxWidth()
@@ -180,11 +204,12 @@ fun DeviceCard(activity: ComponentActivity, device: Device, client: BLEClient) {
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            OutlinedButton(onClick = {
+            OutlinedButton(enabled = !connecting, onClick = {
                 if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN)
                     == PackageManager.PERMISSION_GRANTED
                 ) {
-                    client.connect(device.result.device, {}, {})
+                    onStartConnect()
+                    client.connect(device.result.device, { onConnectDone() }, {})
                 } else {
                     ActivityCompat.requestPermissions(
                         activity, arrayOf(
@@ -193,13 +218,12 @@ fun DeviceCard(activity: ComponentActivity, device: Device, client: BLEClient) {
                     )
                 }
             }) {
-                Text(text = "Connect")
-            }
-
-            OutlinedButton(onClick = {
-                client.disconnect()
-            }) {
-                Text(text = "Disconnect")
+                Text(
+                    when {
+                        connecting -> "Connecting"
+                        else -> "Connect"
+                    }
+                )
             }
         }
     }
