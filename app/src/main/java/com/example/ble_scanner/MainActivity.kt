@@ -1,9 +1,9 @@
 package com.example.ble_scanner
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -41,23 +41,18 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.ble_scanner.ui.theme.BLE_scannerTheme
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 enum class Screen() {
     Scanner
 }
 
 class MainActivity : ComponentActivity() {
-    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdge()
         setContent {
             BLE_scannerTheme {
-                val navController = rememberNavController()
-
                 val scannerViewModel: Scanner = viewModel(
                     factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
                 )
@@ -69,22 +64,14 @@ class MainActivity : ComponentActivity() {
                     topBar = { TopBarDisplay() },
                     modifier = Modifier.fillMaxSize()
                 ) { innerPadding ->
-                    NavHost(
-                        navController = navController,
-                        startDestination = Screen.Scanner.name,
-                        modifier = Modifier
+                    BleDeviceListScreen(
+                        this@MainActivity,
+                        scannerViewModel,
+                        connectViewModel,
+                        Modifier
                             .padding(innerPadding)
                             .padding(horizontal = 16.dp)
-                            .fillMaxSize()
-                    ) {
-                        composable(route = Screen.Scanner.name) {
-                            BleDeviceListScreen(
-                                this@MainActivity,
-                                scannerViewModel,
-                                connectViewModel
-                            )
-                        }
-                    }
+                    )
                 }
             }
         }
@@ -100,23 +87,27 @@ fun TopBarDisplay() {
 }
 
 @Composable
-fun BleDeviceListScreen(activity: ComponentActivity, scanner: Scanner, client: BLEClient) {
+fun BleDeviceListScreen(
+    activity: ComponentActivity,
+    scanner: Scanner,
+    client: BLEClient,
+    modifier: Modifier
+) {
     val context = LocalContext.current
     val scannerState = scanner.state.collectAsState().value
-    val connectingDevices = remember { mutableStateOf<String?>(null) }
+    val clientState = client.state.collectAsState().value
 
-    client.state.collectAsState().value?.let { state ->
-        DeviceDialog(
-            client = client,
-            onDismiss = {
-                client.disconnect()
-                connectingDevices.value = null
-            }
+    var connectingTo by remember { mutableStateOf<Device?>(null) }
+
+    if (clientState != null) {
+        DeviceDisplay(
+            activity = activity,
+            client = client
         )
     }
 
     Column(
-        modifier = Modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize()
     ) {
         Box(
             modifier = Modifier
@@ -152,12 +143,29 @@ fun BleDeviceListScreen(activity: ComponentActivity, scanner: Scanner, client: B
             modifier = Modifier.fillMaxSize()
         ) {
             items(scannerState.devices) {
-                DeviceCard(
-                    activity, it, client,
-                    connectingDevices.value,
-                    onStartConnect = { connectingDevices.value = it.result.device.address },
-                    onConnectDone = { connectingDevices.value = null }
-                )
+                DeviceCard(it, connectingTo) {
+                    if (ActivityCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.BLUETOOTH_SCAN
+                        )
+                        != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        connectingTo = it
+
+                        client.connect(
+                            device = it.result.device,
+                            onConnect = { connectingTo = null },
+                            onInvalid = {
+                                Toast.makeText(context, "Failed to connect.", Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+                        )
+                    } else {
+                        ActivityCompat.requestPermissions(
+                            activity, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 1
+                        )
+                    }
+                }
             }
         }
     }
@@ -165,14 +173,10 @@ fun BleDeviceListScreen(activity: ComponentActivity, scanner: Scanner, client: B
 
 @Composable
 fun DeviceCard(
-    activity: ComponentActivity, device: Device, client: BLEClient,
-    connectingDevice: String?,
-    onStartConnect: () -> Unit,
-    onConnectDone: () -> Unit
+    device: Device,
+    connectingTo: Device?,
+    onClick: () -> Unit
 ) {
-    val context = LocalContext.current
-    val connecting = connectingDevice == device.result.device.address
-
     OutlinedCard(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -204,26 +208,8 @@ fun DeviceCard(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            OutlinedButton(enabled = !connecting, onClick = {
-                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN)
-                    == PackageManager.PERMISSION_GRANTED
-                ) {
-                    onStartConnect()
-                    client.connect(device.result.device, { onConnectDone() }, {})
-                } else {
-                    ActivityCompat.requestPermissions(
-                        activity, arrayOf(
-                            Manifest.permission.BLUETOOTH_CONNECT,
-                        ), 1
-                    )
-                }
-            }) {
-                Text(
-                    when {
-                        connecting -> "Connecting"
-                        else -> "Connect"
-                    }
-                )
+            OutlinedButton(enabled = connectingTo == null, onClick = onClick) {
+                Text(if (connectingTo == device) "Connecting" else "Connect")
             }
         }
     }

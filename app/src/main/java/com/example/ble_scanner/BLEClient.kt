@@ -185,6 +185,7 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
             @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
             override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
                 super.onServicesDiscovered(g, status)
+                onConnect()
 
                 val validService = g.services?.find { services.containsKey(it.uuid) }
                 if (validService == null) {
@@ -199,8 +200,6 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
                     serviceUUID = validService.uuid,
                     service = service,
                     readValues = service.characteristics.associateWith { "-" })
-
-                onConnect()
             }
 
             override fun onCharacteristicRead(
