@@ -80,7 +80,15 @@ class MainActivity : ComponentActivity() {
                             BleDeviceListScreen(
                                 this@MainActivity,
                                 scannerViewModel,
-                                connectViewModel
+                                connectViewModel,
+                                navController
+                            )
+                        }
+
+                        composable(route = Screen.Client.name) {
+                            DeviceDisplay(
+                                this@MainActivity,
+                                connectViewModel,
                             )
                         }
                     }

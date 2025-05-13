@@ -21,30 +21,25 @@ import java.util.UUID
 
 @Composable
 fun DeviceDisplay(activity: ComponentActivity, client: BLEClient) {
-    val state = client.state.collectAsState().value!! // Dialog only appears if state is connected
+    val state = client.state.collectAsState().value
+
+    if (state == null) {
+        Text("No connection :(")
+        return
+    }
+
     val readValues = state.readValues
     val service = state.service
 
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        Row {
-            Text(
-                text = state.service.identifier,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            OutlinedButton(onClick = {
-                if (activity.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)
-                    == PackageManager.PERMISSION_GRANTED
-                ) {
-                    client.disconnect()
-                }
-            }) {
-                Text("Disconnect")
-            }
-        }
+        Text(
+            text = state.service.identifier,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(service.characteristics.toList()) { uuid ->
@@ -54,7 +49,6 @@ fun DeviceDisplay(activity: ComponentActivity, client: BLEClient) {
                 OutlinedCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(96.dp)
                 ) {
                     Column {
                         Box(
@@ -74,7 +68,7 @@ fun DeviceDisplay(activity: ComponentActivity, client: BLEClient) {
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         }
-                        Row {
+                        Row(modifier = Modifier.align(Alignment.CenterHorizontally)) {
                             if (characteristic.read != null) {
                                 OutlinedButton(onClick = {
                                     if (activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)

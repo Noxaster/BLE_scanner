@@ -2,6 +2,7 @@ package com.example.ble_scanner
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Arrangement
@@ -32,26 +33,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
+import androidx.navigation.NavHostController
 
 
 @Composable
 fun BleDeviceListScreen(
     activity: ComponentActivity,
     scanner: Scanner,
-    client: BLEClient
+    client: BLEClient,
+    nav: NavHostController
 ) {
     val context = LocalContext.current
     val scannerState = scanner.state.collectAsState().value
     val clientState = client.state.collectAsState().value
 
     var connectingTo by remember { mutableStateOf<Device?>(null) }
-
-    if (clientState != null) {
-        DeviceDisplay(
-            activity = activity,
-            client = client
-        )
-    }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -64,15 +60,16 @@ fun BleDeviceListScreen(
         ) {
             Row {
                 OutlinedButton(onClick = {
-                    if (ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN)
+                    if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)
                         == PackageManager.PERMISSION_GRANTED
                     ) {
                         scanner.toggleScan()
                     } else {
                         ActivityCompat.requestPermissions(
                             activity, arrayOf(
-                                android.Manifest.permission.BLUETOOTH_SCAN,
-                                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.BLUETOOTH_SCAN,
+                                Manifest.permission.BLUETOOTH_CONNECT,
+                                Manifest.permission.ACCESS_FINE_LOCATION,
                             ), 1
                         )
                     }
@@ -81,12 +78,12 @@ fun BleDeviceListScreen(
                 }
 
                 OutlinedButton(enabled = clientState != null, onClick = {
+                    connectingTo = null
                     client.disconnect()
                 }) {
                     Text(text = "Disconnect")
                 }
             }
-
         }
         Text(
             text = "Found Devices",
@@ -99,19 +96,21 @@ fun BleDeviceListScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             items(scannerState.devices) {
-                DeviceCard(it, connectingTo) {
-                    if (ActivityCompat.checkSelfPermission(
-                            context,
-                            android.Manifest.permission.BLUETOOTH_SCAN
-                        )
-                        != PackageManager.PERMISSION_GRANTED
+                DeviceCard(it, connectingTo, clientState != null) {
+                    if (clientState != null) {
+                        nav.navigate(Screen.Client.name)
+                    }
+
+                    if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                        == PackageManager.PERMISSION_GRANTED
                     ) {
                         connectingTo = it
 
                         client.connect(
                             device = it.result.device,
-                            onConnect = { connectingTo = null },
+                            onConnect = {},
                             onInvalid = {
+                                connectingTo = null
                                 Toast.makeText(context, "Failed to connect.", Toast.LENGTH_SHORT)
                                     .show()
                             }
@@ -131,8 +130,11 @@ fun BleDeviceListScreen(
 fun DeviceCard(
     device: Device,
     connectingTo: Device?,
+    connected: Boolean,
     onClick: () -> Unit
 ) {
+    val connectingToThis = connectingTo == device
+
     OutlinedCard(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -164,8 +166,8 @@ fun DeviceCard(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            OutlinedButton(enabled = connectingTo == device, onClick = onClick) {
-                Text(if (connectingTo == device) "Connecting" else "Connect")
+            OutlinedButton(enabled = connectingTo == null || connectingToThis, onClick = onClick) {
+                Text(if (connectingToThis) if (connected) "Connected" else "Connecting" else "Connect")
             }
         }
     }
