@@ -197,10 +197,7 @@ fun BleDeviceListScreen(
                             context,
                             device = it,
                             onConnect = {},
-                            onInvalid = {
-                                Toast.makeText(context, "Failed to connect.", Toast.LENGTH_SHORT)
-                                    .show()
-                            }
+                            onInvalid = {}
                         )
                     } else {
                         ActivityCompat.requestPermissions(
