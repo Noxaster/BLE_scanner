@@ -9,14 +9,19 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
+import android.content.Context
 import android.os.Build
 import android.util.Log
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.Charset
@@ -136,16 +141,23 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    fun writeCharacteristic(characteristicUUID: UUID, value: String): Boolean {
+    fun writeCharacteristic(context: Context, characteristicUUID: UUID, value: String): Boolean {
         val state = _state.value ?: return false
 
         val gattCharacteristic = state.gatt
             .getService(state.serviceUUID)
             ?.getCharacteristic(characteristicUUID) ?: return false
 
+        val writeBytes = try {
+            characteristics[characteristicUUID]?.write?.let { it(value) } ?: return false
+        } catch (e: RuntimeException) {
+            Toast.makeText(context, e.message, Toast.LENGTH_SHORT).show()
+            return false
+        }
+
         return state.gatt.writeCharacteristic(
             gattCharacteristic,
-            characteristics[characteristicUUID]?.write?.let { it(value) } ?: return false,
+            writeBytes,
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         ) == BluetoothStatusCodes.SUCCESS
     }
@@ -168,21 +180,36 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun connect(
+        context: Context,
         device: BluetoothDevice,
         onConnect: () -> Unit,
         onInvalid: () -> Unit,
     ) {
+        viewModelScope.launch {
+            delay(10_000L)
+            if (_state.value == null) {
+                Log.w("BLE", "Service discovery timed out")
+                onInvalid()
+                disconnect()
+            }
+        }
+
         device.connectGatt(getApplication(), false, object : BluetoothGattCallback() {
             fun write(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
                 _state.update {
                     if (it == null) return@update null
-                    it.copy(readValues = it.readValues.toMutableMap().apply {
-                        set(
-                            characteristic.uuid,
-                            characteristics[characteristic.uuid]?.read?.let { it(value) }
-                                ?: throw RuntimeException("(Internal) Invalid characteristic.")
-                        )
-                    })
+                    try {
+                        it.copy(readValues = it.readValues.toMutableMap().apply {
+                            set(
+                                characteristic.uuid,
+                                characteristics[characteristic.uuid]?.read?.let { it(value) }
+                                    ?: throw RuntimeException("(Internal) Invalid characteristic.")
+                            )
+                        })
+                    } catch (e: RuntimeException) {
+                        Toast.makeText(context, e.message, Toast.LENGTH_SHORT).show()
+                        it
+                    }
                 }
             }
 
@@ -194,7 +221,6 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
                 val validService = g.services?.find { services.containsKey(it.uuid) }
                 if (validService == null) {
                     disconnect()
-                    onInvalid()
                     return
                 }
 
@@ -238,6 +264,7 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
                         Log.d("BLE", "Disconnected ${g}")
                         g.close()
                         _state.value = null
+                        onInvalid()
                     }
                 }
             }

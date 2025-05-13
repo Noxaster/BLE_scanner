@@ -190,6 +190,7 @@ fun BleDeviceListScreen(
                         connectingTo = it
 
                         client.connect(
+                            context,
                             device = it.result.device,
                             onConnect = {},
                             onInvalid = {

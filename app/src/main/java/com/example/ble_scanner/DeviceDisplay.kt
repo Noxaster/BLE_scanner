@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,6 +119,7 @@ fun WriteDialogLauncher(
     client: BLEClient,
     characteristicUUID: UUID
 ) {
+    val context = LocalContext.current
     var show by remember { mutableStateOf(false) }
 
     if (show) {
@@ -126,7 +128,7 @@ fun WriteDialogLauncher(
                 if (activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
                     == PackageManager.PERMISSION_GRANTED
                 ) {
-                    client.writeCharacteristic(characteristicUUID, value)
+                    client.writeCharacteristic(context, characteristicUUID, value)
                     show = false
                 }
             },
