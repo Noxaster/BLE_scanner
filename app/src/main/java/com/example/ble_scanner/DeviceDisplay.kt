@@ -2,6 +2,7 @@ package com.example.ble_scanner
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,7 +21,11 @@ import androidx.core.app.ActivityCompat
 import java.util.UUID
 
 @Composable
-fun DeviceDisplay(activity: ComponentActivity, client: BLEClient) {
+fun DeviceDisplay(
+    activity: ComponentActivity,
+    client: BLEClient,
+    connectingTo: MutableState<Device?>
+) {
     val state = client.state.collectAsState().value
 
     if (state == null) {
@@ -77,10 +82,16 @@ fun DeviceDisplay(activity: ComponentActivity, client: BLEClient) {
                                         client.readCharacteristic(uuid)
                                     }
                                 }) { Text("Update") }
+                            }
 
+                            if (characteristic.doesNotification) {
                                 OutlinedButton(onClick = {
-                                    notifying = !notifying
-                                    client.enableNotifications(notifying, uuid)
+                                    if (activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                                        == PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        notifying = !notifying
+                                        client.enableNotifications(notifying, uuid)
+                                    }
                                 }) {
                                     Text(if (notifying) "Stop" else "Notify")
                                 }
@@ -102,7 +113,7 @@ fun DeviceDisplay(activity: ComponentActivity, client: BLEClient) {
 }
 
 @Composable
-private fun WriteDialogLauncher(
+fun WriteDialogLauncher(
     activity: ComponentActivity,
     client: BLEClient,
     characteristicUUID: UUID
@@ -116,6 +127,7 @@ private fun WriteDialogLauncher(
                     == PackageManager.PERMISSION_GRANTED
                 ) {
                     client.writeCharacteristic(characteristicUUID, value)
+                    show = false
                 }
             },
             onDismiss = { show = false }

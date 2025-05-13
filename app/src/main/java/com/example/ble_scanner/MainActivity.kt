@@ -43,20 +43,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.ble_scanner.ui.theme.BLE_scannerTheme
 
-enum class Screen() {
-    Scanner,
-    Client,
-}
-
 class MainActivity : ComponentActivity() {
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdge()
         setContent {
             BLE_scannerTheme {
-                val navController = rememberNavController()
-
                 val scannerViewModel: Scanner = viewModel(
                     factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
                 )
@@ -65,43 +59,23 @@ class MainActivity : ComponentActivity() {
                 )
 
                 Scaffold(
-                    topBar = { TopBarDisplay() },
+                    topBar = { TopAppBar(title = { Text(text = "BLE Scanner") }) },
                     modifier = Modifier.fillMaxSize()
                 ) { innerPadding ->
-                    NavHost(
-                        navController = navController,
-                        startDestination = Screen.Scanner.name,
+                    Box(
                         modifier = Modifier
                             .padding(innerPadding)
                             .padding(horizontal = 16.dp)
                             .fillMaxSize()
                     ) {
-                        composable(route = Screen.Scanner.name) {
-                            BleDeviceListScreen(
-                                this@MainActivity,
-                                scannerViewModel,
-                                connectViewModel,
-                                navController
-                            )
-                        }
-
-                        composable(route = Screen.Client.name) {
-                            DeviceDisplay(
-                                this@MainActivity,
-                                connectViewModel,
-                            )
-                        }
+                        BleDeviceListScreen(
+                            this@MainActivity,
+                            scannerViewModel,
+                            connectViewModel,
+                        )
                     }
                 }
             }
         }
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun TopBarDisplay() {
-    TopAppBar(
-        title = { Text(text = "BLE Scanner") },
-    )
 }

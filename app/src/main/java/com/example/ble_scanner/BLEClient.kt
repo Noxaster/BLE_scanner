@@ -37,6 +37,7 @@ enum class ServiceType(val uuid: UUID) {
 val characteristics: Map<UUID, Characteristic> = mapOf(
     CharacteristicType.Temperature.uuid to Characteristic(
         identifier = CharacteristicType.Temperature.name,
+        doesNotification = true,
         read = {
             ieee11073ToFloat(it.sliceArray(1..it.size - 1), 0).toString() + "°C"
         },
@@ -44,6 +45,7 @@ val characteristics: Map<UUID, Characteristic> = mapOf(
     ),
     CharacteristicType.Humidity.uuid to Characteristic(
         identifier = CharacteristicType.Humidity.name,
+        doesNotification = true,
         read = {
             val str = ByteBuffer
                 .wrap(it + byteArrayOf(0x00, 0x00))
@@ -55,6 +57,7 @@ val characteristics: Map<UUID, Characteristic> = mapOf(
     ),
     CharacteristicType.Intensity.uuid to Characteristic(
         identifier = CharacteristicType.Intensity.name,
+        doesNotification = false,
         read = {
             ByteBuffer
                 .wrap(it + byteArrayOf(0x00, 0x00))
@@ -65,7 +68,7 @@ val characteristics: Map<UUID, Characteristic> = mapOf(
             it.toUIntOrNull()?.let {
                 if (it > 0xFFFFu) throw RuntimeException("Number too large!")
                 ByteBuffer.allocate(UInt.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
-                    .putInt(it.toInt()).array()
+                    .putInt(it.toInt()).array().slice(0..1).toByteArray()
             } ?: throw RuntimeException("Number must be a valid 4 byte unsigned integer!")
         }
     )
@@ -73,6 +76,7 @@ val characteristics: Map<UUID, Characteristic> = mapOf(
 
 data class Characteristic(
     val identifier: String,
+    val doesNotification: Boolean,
     val read: ((ByteArray) -> String)?,
     val write: ((String) -> ByteArray)?,
 )
@@ -141,7 +145,7 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
 
         return state.gatt.writeCharacteristic(
             gattCharacteristic,
-            characteristics[characteristicUUID]!!.write!!(value),
+            characteristics[characteristicUUID]?.write?.let { it(value) } ?: return false,
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         ) == BluetoothStatusCodes.SUCCESS
     }
@@ -230,16 +234,18 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
                         g.discoverServices()
                     }
 
-                    BluetoothProfile.STATE_DISCONNECTED -> disconnect()
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        Log.d("BLE", "Disconnected ${g}")
+                        g.close()
+                        _state.value = null
+                    }
                 }
             }
         })
     }
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    fun disconnect() = _state.update {
-        if (it == null) return@update it
-        it.gatt.close()
-        return@update null
+    fun disconnect() {
+        _state.value?.gatt?.disconnect()
     }
 }
