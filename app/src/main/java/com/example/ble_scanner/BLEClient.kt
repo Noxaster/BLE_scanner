@@ -2,7 +2,6 @@ package com.example.ble_scanner
 
 import android.Manifest
 import android.app.Application
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
@@ -11,20 +10,15 @@ import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
-import android.util.Log
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.charset.Charset
 import java.util.UUID
 import kotlin.math.pow
 
@@ -131,8 +125,26 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow<BLEClientState?>(null)
     val state = _state.asStateFlow()
 
+    private val _isConnecting = MutableStateFlow<Device?>(null)
+    val isConnection = _isConnecting.asStateFlow()
+
+    private val readQueue = ArrayDeque<UUID>()
+
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun readCharacteristic(characteristicUUID: UUID): Boolean {
+        val state = _state.value ?: return false
+
+        if (readQueue.isEmpty()) {
+            if (!_readCharacteristic(characteristicUUID))
+                return false
+        }
+
+        readQueue.add(characteristicUUID)
+        return true
+    }
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private fun _readCharacteristic(characteristicUUID: UUID): Boolean {
         val state = _state.value ?: return false
         return state.gatt.getService(state.serviceUUID)
             ?.getCharacteristic(characteristicUUID)
@@ -181,20 +193,22 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun connect(
         context: Context,
-        device: BluetoothDevice,
+        device: Device,
         onConnect: () -> Unit,
         onInvalid: () -> Unit,
     ) {
-        viewModelScope.launch {
-            delay(10_000L)
-            if (_state.value == null) {
-                Log.w("BLE", "Service discovery timed out")
-                onInvalid()
-                disconnect()
-            }
-        }
+//        viewModelScope.launch {
+//            delay(10_000L)
+//            if (_state.value == null) {
+//                Log.w("BLE", "Service discovery timed out")
+//                onInvalid()
+//                disconnect()
+//            }
+//        }
 
-        device.connectGatt(getApplication(), false, object : BluetoothGattCallback() {
+        _isConnecting.value = device
+
+        device.result.device.connectGatt(getApplication(), false, object : BluetoothGattCallback() {
             fun write(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
                 _state.update {
                     if (it == null) return@update null
@@ -219,8 +233,10 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
                 onConnect()
 
                 val validService = g.services?.find { services.containsKey(it.uuid) }
-                if (validService == null) {
+                if (validService == null || _isConnecting.value == null) {
                     disconnect()
+                    g.close()
+                    _state.value = null
                     return
                 }
 
@@ -232,6 +248,7 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
                     readValues = service.characteristics.associateWith { "-" })
             }
 
+            @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
             override fun onCharacteristicRead(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
@@ -240,6 +257,8 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
             ) {
                 super.onCharacteristicRead(gatt, characteristic, value, status)
                 write(characteristic, value)
+                readQueue.removeFirst()
+                readQueue.firstOrNull()?.let { _readCharacteristic(it) }
             }
 
             override fun onCharacteristicChanged(
@@ -261,7 +280,6 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
                     }
 
                     BluetoothProfile.STATE_DISCONNECTED -> {
-                        Log.d("BLE", "Disconnected ${g}")
                         g.close()
                         _state.value = null
                         onInvalid()
@@ -274,5 +292,6 @@ class BLEClient(application: Application) : AndroidViewModel(application) {
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun disconnect() {
         _state.value?.gatt?.disconnect()
+        _isConnecting.value = null
     }
 }

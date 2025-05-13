@@ -2,7 +2,6 @@ package com.example.ble_scanner
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Arrangement
@@ -20,7 +19,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
-import androidx.navigation.NavHostController
 
 
 @Composable
@@ -47,7 +44,9 @@ fun BleDeviceListScreen(
     val scannerState = scanner.state.collectAsState().value
     val clientState = client.state.collectAsState().value
 
-    var connectingTo by remember { mutableStateOf<Device?>(null) }
+    val connectingTo = client.isConnection.collectAsState().value
+
+//    var connectingTo by remember { mutableStateOf<Device?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -82,7 +81,6 @@ fun BleDeviceListScreen(
                         == PackageManager.PERMISSION_GRANTED
                     ) {
                         client.disconnect()
-                        connectingTo = null
                     }
                 }) {
                     Text(text = "Disconnect")
@@ -97,12 +95,20 @@ fun BleDeviceListScreen(
             Column(
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = state.service.identifier,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
+                Row {
+                    Text(
+                        text = state.service.identifier,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    OutlinedButton(onClick = {
+                        service.characteristics.forEach {
+                            client.readCharacteristic(it)
+                        }
+                    }) { Text("Update all") }
+                }
 
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(service.characteristics.toList()) { uuid ->
@@ -187,14 +193,11 @@ fun BleDeviceListScreen(
                     if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
                         == PackageManager.PERMISSION_GRANTED
                     ) {
-                        connectingTo = it
-
                         client.connect(
                             context,
-                            device = it.result.device,
+                            device = it,
                             onConnect = {},
                             onInvalid = {
-                                connectingTo = null
                                 Toast.makeText(context, "Failed to connect.", Toast.LENGTH_SHORT)
                                     .show()
                             }
